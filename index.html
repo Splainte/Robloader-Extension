@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Robloader</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+  <header>
+    <h1>⚙️ Robloader</h1>
+    <div id="status" class="status paused">Démarrage…</div>
+  </header>
+
+  <div class="target-row">
+    <span class="label">Destination :</span>
+    <span id="target">—</span>
+  </div>
+
+  <div class="field">
+    <input id="url" type="text" placeholder="Colle l'URL (YouTube, TikTok, Instagram, X, Weibo)…"/>
+  </div>
+
+  <div class="row">
+    <select id="quality" title="Qualité (YouTube)">
+      <option value="">Qualité max (jusqu'à 4K)</option>
+      <option value="1440">1440p (2K)</option>
+      <option value="1080">1080p (Full HD)</option>
+      <option value="720">720p (HD)</option>
+      <option value="480">480p</option>
+    </select>
+    <label class="chk"><input id="audio" type="checkbox"/> Audio seul (WAV)</label>
+  </div>
+
+  <div class="row">
+    <span class="label">Extrait :</span>
+    <input id="start" class="tc" type="text" placeholder="00:00"/>
+    <span class="dash">→</span>
+    <input id="end" class="tc" type="text" placeholder="01:30"/>
+    <span class="muted small">(vide = tout)</span>
+  </div>
+
+  <div class="controls">
+    <button id="download">Télécharger</button>
+    <button id="clear" class="small">Nettoyer</button>
+  </div>
+
+  <div id="queue"></div>
+
+  <div id="log"></div>
+
+  <div class="footer-row">
+    <span class="muted" id="version">v?</span>
+    <button id="update" class="small">Vérifier les mises à jour</button>
+  </div>
+
+  <script src="js/CSInterface.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+.DS_Store
+.claude/
+
+node_modules/
+
+# Binaires externes (récupérés par bin/fetch-binaries.*)
+bin/win/
+bin/mac/
+
+# Sortie de l'installeur Inno Setup
+installer/Output/
+
+# cookies utilisateur éventuels
+cookies.txt

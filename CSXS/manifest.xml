@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   ExtensionBundleId="com.splainte.robloader"
+                   ExtensionBundleVersion="1.0.0"
+                   ExtensionBundleName="Robloader"
+                   Version="9.0">
+  <ExtensionList>
+    <Extension Id="com.splainte.robloader.panel" Version="1.0.0"/>
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <!-- Premiere Pro 2020 (14.0) et toutes versions ultérieures -->
+      <Host Name="PPRO" Version="[14.0,99.9]"/>
+    </HostList>
+    <LocaleList>
+      <Locale Code="All"/>
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0"/>
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.splainte.robloader.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./jsx/robloader.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--enable-nodejs</Parameter>
+            <Parameter>--mixed-context</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>Robloader</Menu>
+          <Geometry>
+            <Size>
+              <Height>440</Height>
+              <Width>340</Width>
+            </Size>
+            <MinSize>
+              <Height>260</Height>
+              <Width>260</Width>
+            </MinSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>
