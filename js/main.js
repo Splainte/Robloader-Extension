@@ -255,52 +255,87 @@ function decideTranscode(site, codec, height) {
   return false;
 }
 
-// ---------- Encodeur H.265 matériel ----------
-// `ffmpeg -encoders` liste TOUJOURS nvenc/qsv/amf (build BtbN) même sans le GPU
-// correspondant : tester l'encodeur sur une mire est le seul moyen fiable de
-// savoir s'il tourne vraiment. On retient le premier qui marche (NVIDIA, puis
-// Intel QSV, puis AMD ; videotoolbox sur Mac), sinon CPU. Résultat mis en cache.
+// ---------- Encodeur H.265 ----------
+// `ffmpeg -encoders` liste TOUJOURS nvenc/qsv/amf (build BtbN) et un test sur
+// mire synthétique n'est pas représentatif : on encode donc directement le VRAI
+// fichier en essayant les encodeurs dans l'ordre (NVIDIA → Intel QSV → AMD ; Mac
+// : videotoolbox ; sinon CPU libx265). Le premier qui réussit est mémorisé pour
+// la session — les fichiers suivants vont droit au bon encodeur. Si un GPU cale,
+// on logue la vraie erreur ffmpeg avant de passer au suivant.
 
-var _encoderPromise = null;
-
-function testEncoder(encName) {
-  var args = ["-hide_banner", "-loglevel", "error", "-f", "lavfi",
-    "-i", "testsrc=duration=0.1:size=256x256:rate=5",
-    "-c:v", encName, "-f", "null", "-"];
-  return runProcess(FFMPEG, args, null, null)
-    .then(function (code) { return code === 0; })
-    .catch(function () { return false; });
-}
-
-function getVideoEncoder() {
-  if (_encoderPromise) { return _encoderPromise; }
-  var candidates = IS_MAC ? [
-    { label: "GPU Apple", enc: "hevc_videotoolbox",
-      venc: ["-c:v", "hevc_videotoolbox", "-q:v", "65", "-tag:v", "hvc1"] }
-  ] : [
-    { label: "GPU NVIDIA", enc: "hevc_nvenc",
+function h265Candidates() {
+  var aenc = ["-c:a", "aac", "-b:a", "256k"];
+  var cpu = { label: "CPU", aenc: aenc,
+    venc: ["-c:v", "libx265", "-crf", "18", "-preset", "fast", "-tag:v", "hvc1"] };
+  if (IS_MAC) {
+    return [
+      { label: "GPU Apple", aenc: aenc,
+        venc: ["-c:v", "hevc_videotoolbox", "-q:v", "65", "-tag:v", "hvc1"] },
+      cpu
+    ];
+  }
+  return [
+    { label: "GPU NVIDIA", aenc: aenc,
       venc: ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "18",
         "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] },
-    { label: "GPU Intel", enc: "hevc_qsv",
+    { label: "GPU Intel", aenc: aenc,
       venc: ["-c:v", "hevc_qsv", "-global_quality", "18", "-pix_fmt", "nv12", "-tag:v", "hvc1"] },
-    { label: "GPU AMD", enc: "hevc_amf",
+    { label: "GPU AMD", aenc: aenc,
       venc: ["-c:v", "hevc_amf", "-rc", "cqp", "-qp_i", "18", "-qp_p", "18",
-        "-quality", "quality", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] }
+        "-quality", "quality", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] },
+    cpu
   ];
-  _encoderPromise = (function next(i) {
-    if (i >= candidates.length) {
-      log("Aucun encodeur GPU H.265 → encodage CPU (libx265).", "warn");
-      return Promise.resolve(null);
-    }
-    return testEncoder(candidates[i].enc).then(function (ok) {
-      if (ok) {
-        log("Encodeur H.265 : " + candidates[i].label + " (" + candidates[i].enc + ")");
-        return candidates[i];
+}
+
+// Encodeur retenu lors d'un transcodage réussi (label), pour aller droit au but.
+var selectedEncoderLabel = null;
+
+function encodeH265(task, temp, finalOut, seek, dur, segDur) {
+  var all = h265Candidates();
+  var list = all;
+  if (selectedEncoderLabel) {
+    var chosen = all.filter(function (c) { return c.label === selectedEncoderLabel; });
+    var cpu = all.filter(function (c) { return c.label === "CPU"; });
+    list = (selectedEncoderLabel === "CPU") ? cpu : chosen.concat(cpu);
+  }
+
+  var i = 0;
+  function attempt() {
+    var cand = list[i];
+    var label = "Conversion H.265 (" + cand.label + ")…";
+    var lastErr = "";
+    setTaskState(task, label);
+    setBar(task, 0);
+    var cmd = ["-y", "-progress", "pipe:1"].concat(seek)
+      .concat(["-i", temp]).concat(dur).concat(cand.venc).concat(cand.aenc).concat([finalOut]);
+    return runProcess(FFMPEG, cmd, task, function (line) {
+      var m = line.match(/out_time_us=(\d+)/);
+      if (m && segDur > 0) {
+        var p = Math.min(parseInt(m[1], 10) / (segDur * 1000000), 1);
+        setBar(task, p);
+        setTaskState(task, label + " " + Math.round(p * 100) + "%");
+      } else if (/error|failed|not supported|not found|cannot|unknown|no capable|unable/i.test(line)) {
+        lastErr = line.trim();
       }
-      return next(i + 1);
+    }).then(function (code) {
+      if (task.cancelled) { throw new Error("Annulé"); }
+      if (code === 0) {
+        selectedEncoderLabel = cand.label;
+        log("Encodé en H.265 — " + cand.label);
+        return;
+      }
+      if (cand.label !== "CPU") {
+        log("Encodage " + cand.label + " indisponible (" +
+          (lastErr || ("code " + code)) + ") → essai suivant.", "warn");
+      }
+      i++;
+      if (i >= list.length) {
+        throw new Error("Transcodage H.265 échoué" + (lastErr ? " : " + lastErr : ""));
+      }
+      return attempt();
     });
-  })(0);
-  return _encoderPromise;
+  }
+  return attempt();
 }
 
 // ---------- File d'attente / téléchargement ----------
@@ -538,32 +573,8 @@ function downloadOne(task) {
                 .then(function () { try { fs.unlinkSync(temp); } catch (e) {} return finalOut; });
             }
 
-            // ----- Transcodage H.265 (GPU réellement disponible, sinon CPU) -----
-            var aenc = ["-c:a", "aac", "-b:a", "256k"];
-            var vencCpu = ["-c:v", "libx265", "-crf", "18", "-preset", "fast", "-tag:v", "hvc1"];
-
-            function cpuEncode() {
-              setTaskState(task, "Encodage CPU…");
-              setBar(task, 0);
-              var hCpu = ["-y", "-progress", "pipe:1"].concat(seek)
-                .concat(["-i", temp]).concat(dur).concat(vencCpu).concat(aenc).concat([finalOut]);
-              return runFfmpeg(task, hCpu, segDur, "Encodage CPU…");
-            }
-
-            return getVideoEncoder().then(function (enc) {
-              if (!enc) { return cpuEncode(); }
-              var label = "Conversion H.265 (" + enc.label + ")…";
-              setTaskState(task, label);
-              setBar(task, 0);
-              var hCmd = ["-y", "-progress", "pipe:1"].concat(seek)
-                .concat(["-i", temp]).concat(dur).concat(enc.venc).concat(aenc).concat([finalOut]);
-              return runFfmpeg(task, hCmd, segDur, label).catch(function (e) {
-                if (task.cancelled) { throw e; }
-                // Le GPU a passé le test mais cale sur CE fichier : repli CPU.
-                log("Encodage GPU (" + enc.label + ") échoué sur ce fichier → CPU.", "warn");
-                return cpuEncode();
-              });
-            }).then(function () {
+            // ----- Transcodage H.265 (cascade GPU → CPU sur le vrai fichier) -----
+            return encodeH265(task, temp, finalOut, seek, dur, segDur).then(function () {
               try { fs.unlinkSync(temp); } catch (e) {}
               return finalOut;
             });
