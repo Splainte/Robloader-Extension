@@ -255,6 +255,54 @@ function decideTranscode(site, codec, height) {
   return false;
 }
 
+// ---------- Encodeur H.265 matériel ----------
+// `ffmpeg -encoders` liste TOUJOURS nvenc/qsv/amf (build BtbN) même sans le GPU
+// correspondant : tester l'encodeur sur une mire est le seul moyen fiable de
+// savoir s'il tourne vraiment. On retient le premier qui marche (NVIDIA, puis
+// Intel QSV, puis AMD ; videotoolbox sur Mac), sinon CPU. Résultat mis en cache.
+
+var _encoderPromise = null;
+
+function testEncoder(encName) {
+  var args = ["-hide_banner", "-loglevel", "error", "-f", "lavfi",
+    "-i", "testsrc=duration=0.1:size=256x256:rate=5",
+    "-c:v", encName, "-f", "null", "-"];
+  return runProcess(FFMPEG, args, null, null)
+    .then(function (code) { return code === 0; })
+    .catch(function () { return false; });
+}
+
+function getVideoEncoder() {
+  if (_encoderPromise) { return _encoderPromise; }
+  var candidates = IS_MAC ? [
+    { label: "GPU Apple", enc: "hevc_videotoolbox",
+      venc: ["-c:v", "hevc_videotoolbox", "-q:v", "65", "-tag:v", "hvc1"] }
+  ] : [
+    { label: "GPU NVIDIA", enc: "hevc_nvenc",
+      venc: ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "18",
+        "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] },
+    { label: "GPU Intel", enc: "hevc_qsv",
+      venc: ["-c:v", "hevc_qsv", "-global_quality", "18", "-pix_fmt", "nv12", "-tag:v", "hvc1"] },
+    { label: "GPU AMD", enc: "hevc_amf",
+      venc: ["-c:v", "hevc_amf", "-rc", "cqp", "-qp_i", "18", "-qp_p", "18",
+        "-quality", "quality", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] }
+  ];
+  _encoderPromise = (function next(i) {
+    if (i >= candidates.length) {
+      log("Aucun encodeur GPU H.265 → encodage CPU (libx265).", "warn");
+      return Promise.resolve(null);
+    }
+    return testEncoder(candidates[i].enc).then(function (ok) {
+      if (ok) {
+        log("Encodeur H.265 : " + candidates[i].label + " (" + candidates[i].enc + ")");
+        return candidates[i];
+      }
+      return next(i + 1);
+    });
+  })(0);
+  return _encoderPromise;
+}
+
 // ---------- File d'attente / téléchargement ----------
 
 var taskSeq = 0;
@@ -490,27 +538,31 @@ function downloadOne(task) {
                 .then(function () { try { fs.unlinkSync(temp); } catch (e) {} return finalOut; });
             }
 
-            // ----- Transcodage H.265 (GPU si possible, repli CPU) -----
-            var venc, aenc = ["-c:a", "aac", "-b:a", "256k"];
+            // ----- Transcodage H.265 (GPU réellement disponible, sinon CPU) -----
+            var aenc = ["-c:a", "aac", "-b:a", "256k"];
             var vencCpu = ["-c:v", "libx265", "-crf", "18", "-preset", "fast", "-tag:v", "hvc1"];
-            if (IS_MAC) {
-              venc = ["-c:v", "hevc_videotoolbox", "-q:v", "65", "-tag:v", "hvc1"];
-            } else {
-              venc = ["-c:v", "hevc_nvenc", "-rc", "vbr", "-cq", "18",
-                "-pix_fmt", "yuv420p", "-tag:v", "hvc1"];
-            }
-            var hCmd = ["-y", "-progress", "pipe:1"].concat(seek)
-              .concat(["-i", temp]).concat(dur).concat(venc).concat(aenc).concat([finalOut]);
-            setTaskState(task, "Conversion H.265…");
-            setBar(task, 0);
-            return runFfmpeg(task, hCmd, segDur, "Conversion H.265…").catch(function (e) {
-              if (task.cancelled) { throw e; }
-              // Repli encodage CPU (GPU indisponible/échec).
-              setTaskState(task, "Encodage CPU (secours)…", "");
+
+            function cpuEncode() {
+              setTaskState(task, "Encodage CPU…");
               setBar(task, 0);
               var hCpu = ["-y", "-progress", "pipe:1"].concat(seek)
                 .concat(["-i", temp]).concat(dur).concat(vencCpu).concat(aenc).concat([finalOut]);
               return runFfmpeg(task, hCpu, segDur, "Encodage CPU…");
+            }
+
+            return getVideoEncoder().then(function (enc) {
+              if (!enc) { return cpuEncode(); }
+              var label = "Conversion H.265 (" + enc.label + ")…";
+              setTaskState(task, label);
+              setBar(task, 0);
+              var hCmd = ["-y", "-progress", "pipe:1"].concat(seek)
+                .concat(["-i", temp]).concat(dur).concat(enc.venc).concat(aenc).concat([finalOut]);
+              return runFfmpeg(task, hCmd, segDur, label).catch(function (e) {
+                if (task.cancelled) { throw e; }
+                // Le GPU a passé le test mais cale sur CE fichier : repli CPU.
+                log("Encodage GPU (" + enc.label + ") échoué sur ce fichier → CPU.", "warn");
+                return cpuEncode();
+              });
             }).then(function () {
               try { fs.unlinkSync(temp); } catch (e) {}
               return finalOut;
