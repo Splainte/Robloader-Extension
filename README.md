@@ -16,8 +16,9 @@ pas de choix de dossier, pas de réglages superflus, l'extension fait ce qu'il f
 ## ✨ Ce que fait l'extension
 
 - **Multi-plateformes** — YouTube, TikTok, Instagram, X (Twitter), Weibo.
-- **Destination automatique** — tout va dans `ELEMENTS/Robloader/`, à côté de ton
-  projet (voir *Arborescence attendue*). Aucun dossier à choisir.
+- **Destination automatique** — tout va dans `ELEMENTS/Robloader/` si ton projet
+  suit l'arborescence standard, sinon dans un dossier `Robloader/` à côté du `.prproj`.
+  Aucun dossier à choisir.
 - **Import automatique dans Premiere** — le fichier apparaît dans le chutier miroir
   `ELEMENTS/Robloader` dès qu'il est prêt.
 - **Transcodage intelligent et automatique** (voir ci-dessous) — H.265 seulement
@@ -52,10 +53,16 @@ possible, avec repli automatique sur le processeur. Pas d'option ProRes.
 
 ---
 
-## 📁 Arborescence attendue
+## 📁 Arborescence et destination
 
-L'extension part du principe que ton `.prproj` vit dans un dossier `PROJETS`, à côté
-des autres dossiers du projet. Les téléchargements sont rangés dans `ELEMENTS/Robloader` :
+L'extension détecte automatiquement l'organisation de ton projet et choisit la
+destination en conséquence.
+
+### Arborescence standard (dossier PROJETS)
+
+Si ton `.prproj` est dans un dossier dont le nom ressemble à `PROJETS` (tolérant la
+casse, les accents et les petites fautes : `Projets`, `PROJET`, `PROJTS`…), l'extension
+remonte d'un cran et range les fichiers dans `ELEMENTS/Robloader` :
 
 ```
 📁 NOM DU PROJET/        ← dossier parent (déduit de l'emplacement du .prproj)
@@ -67,8 +74,19 @@ des autres dossiers du projet. Les téléchargements sont rangés dans `ELEMENTS
 └── …
 ```
 
-Le même rangement est reproduit dans Premiere sous forme de chutier
-`ELEMENTS ▸ Robloader`.
+### Architecture libre
+
+Si ton `.prproj` est posé ailleurs (dossier personnalisé, directement à la racine du
+projet…), l'extension crée simplement un dossier `Robloader/` à côté du `.prproj` :
+
+```
+📁 MON PROJET/
+├── mon-projet.prproj    ← le .prproj est directement là
+└── 📁 Robloader/        ← 📥 les téléchargements arrivent ici
+```
+
+Dans les deux cas, le chutier `ELEMENTS ▸ Robloader` est créé dans Premiere et le
+dossier de destination est affiché en haut du panneau.
 
 ---
 
@@ -107,7 +125,7 @@ Compatibilité : Premiere Pro 2020 (14.0) et versions ultérieures.
 
 ## ▶️ Utilisation
 
-1. Ouvre ton projet Premiere (le `.prproj` doit être dans un dossier `PROJETS`).
+1. Ouvre ton projet Premiere (peu importe où est rangé le `.prproj`).
 2. Colle l'**URL** de la vidéo dans le panneau Robloader.
 3. *(Optionnel)* choisis la **qualité**, coche **Audio seul**, ou indique un
    **début/fin** pour un extrait.
