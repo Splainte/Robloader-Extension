@@ -141,9 +141,6 @@ passe pas) se règlent en étant **connecté au site dans ton navigateur** : Rob
 utilise alors automatiquement ta session. Tu peux aussi déposer un fichier
 `cookies.txt` à la racine de l'extension (prioritaire sur les cookies navigateur).
 
-Si la 4K/1440p YouTube ne passe pas, vérifie que `bin/.../deno` est bien présent (il
-sert à résoudre le *nsig* ; sans lui, le téléchargement YouTube plafonne à 1080p).
-
 ---
 
 > 🧑‍💻 Architecture : panneau **CEP** (Node.js) + pont ExtendScript (`jsx/robloader.jsx`).
