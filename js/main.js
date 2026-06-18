@@ -563,10 +563,14 @@ function downloadOne(task) {
           .concat(baseArgs).concat(picked).concat([task.url]);
       }
 
+      // Barre monotone : yt-dlp télécharge la vidéo puis l'audio (chaque flux
+      // repart de 0 %) et les fragments peuvent osciller. On ne recule jamais.
+      task.dlMax = 0;
       function onDlLine(line) {
         var m = line.match(/RLPCT\s+([\d.]+)%/);
         if (m) {
           var pct = parseFloat(m[1]) / 100;
+          if (pct < task.dlMax) { pct = task.dlMax; } else { task.dlMax = pct; }
           setBar(task, pct);
           setTaskState(task, "Téléchargement… " + Math.round(pct * 100) + "%");
         }
@@ -587,6 +591,7 @@ function downloadOne(task) {
           // Repli auto en 1080p si la qualité max a échoué (4K bloquée/403).
           if (!task.opts.audio && fallbackH !== targetH) {
             cleanupTemp();
+            task.dlMax = 0;
             setTaskState(task, "Qualité max indisponible — repli 1080p…", "");
             return runProcess(YTDLP, ytArgs(fmtFor(fallbackH), outtmpl), task, onDlLine)
               .then(function (c2) { if (c2 !== 0) { throw new Error("Téléchargement échoué"); } });
@@ -661,8 +666,7 @@ function downloadOne(task) {
             'ROBLOADER.importFile("' + escapeJsxString(finalOut) + '","' + BIN_SEGMENTS + '")'
           ).then(function (res) {
             task.done = true;
-            task.btn.textContent = "OK";
-            task.btn.disabled = true;
+            task.btn.style.display = "none";
             if (res === "OK") {
               setTaskState(task, "Terminé ✓ importé dans ELEMENTS/Robloader", "ok");
               log("Terminé : " + path.basename(finalOut));
