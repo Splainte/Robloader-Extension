@@ -314,8 +314,16 @@ function encodeH265(task, temp, finalOut, seek, dur, segDur) {
         var p = Math.min(parseInt(m[1], 10) / (segDur * 1000000), 1);
         setBar(task, p);
         setTaskState(task, label + " " + Math.round(p * 100) + "%");
-      } else if (/error|failed|not supported|not found|cannot|unknown|no capable|unable/i.test(line)) {
-        lastErr = line.trim();
+      } else if (/error|failed|not supported|not found|cannot|unknown|no capable|unable|invalid|required|out of memory/i.test(line)) {
+        // ffmpeg termine toujours par « Conversion failed! », qui masquait la vraie
+        // cause nvenc/qsv/amf affichée juste avant. On retient la PREMIÈRE erreur
+        // spécifique et on ne laisse le générique que faute de mieux.
+        var clean = line.trim();
+        if (/^conversion failed/i.test(clean)) {
+          if (!lastErr) { lastErr = clean; }
+        } else if (!lastErr || /^conversion failed/i.test(lastErr)) {
+          lastErr = clean;
+        }
       }
     }).then(function (code) {
       if (task.cancelled) { throw new Error("Annulé"); }
