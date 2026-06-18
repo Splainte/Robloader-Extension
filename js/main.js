@@ -162,7 +162,32 @@ function evalScript(script) {
   return new Promise(function (resolve) { cs.evalScript(script, resolve); });
 }
 
+// Normalise un nom de dossier : minuscules, sans accents, sans 's' final.
+function normFolderName(name) {
+  return name.toLowerCase()
+    .replace(/[éèê]/g, "e").replace(/[àâ]/g, "a")
+    .replace(/[îï]/g, "i").replace(/[ùûü]/g, "u").replace(/[ôö]/g, "o")
+    .replace(/s$/, "");
+}
+
+// Distance de Levenshtein (petites chaînes uniquement).
+function levenshtein(a, b) {
+  var m = a.length, n = b.length, d = [], i, j;
+  for (i = 0; i <= m; i++) { d[i] = [i]; }
+  for (j = 1; j <= n; j++) { d[0][j] = j; }
+  for (j = 1; j <= n; j++) {
+    for (i = 1; i <= m; i++) {
+      d[i][j] = a[i - 1] === b[j - 1] ? d[i - 1][j - 1]
+        : 1 + Math.min(d[i - 1][j], d[i][j - 1], d[i - 1][j - 1]);
+    }
+  }
+  return d[m][n];
+}
+
 // Racine du projet montage depuis le .prproj ouvert, + dossier de destination.
+// Deux modes :
+//  • Architecture standard  (<racine>/PROJETS/<projet.prproj>) → ELEMENTS/Robloader
+//  • Architecture libre (tout autre organisation)              → <dossier du .prproj>/Robloader
 function resolveDestination() {
   return evalScript("ROBLOADER.getProjectPath()").then(function (projPath) {
     if (projPath === "EvalScript error.") {
@@ -172,13 +197,14 @@ function resolveDestination() {
       throw new Error("aucun projet ouvert — ouvre un .prproj puis réessaie");
     }
     var projDir = path.dirname(projPath);
-    if (path.basename(projDir).toUpperCase().indexOf("PROJET") !== 0) {
-      throw new Error("le .prproj doit vivre dans un dossier PROJETS (trouvé : " +
-        path.basename(projDir) + ")");
+    var dirName = path.basename(projDir);
+    if (levenshtein(normFolderName(dirName), "projet") <= 1) {
+      var root = path.resolve(projDir, "..");
+      return { root: root, dest: path.join(root, "ELEMENTS", "Robloader") };
     }
-    var root = path.resolve(projDir, "..");
-    var dest = path.join(root, "ELEMENTS", "Robloader");
-    return { root: root, dest: dest };
+    // Archi libre : on pose les fichiers à côté du .prproj dans un sous-dossier Robloader.
+    log("Architecture libre (dossier « " + dirName + " ») → destination : Robloader/ à côté du .prproj", "warn");
+    return { root: projDir, dest: path.join(projDir, "Robloader") };
   });
 }
 
@@ -234,16 +260,48 @@ function probeInfo(url, baseArgs, cookieArgs, task) {
 function ffprobeVideo(file) {
   return runProcess(FFPROBE, [
     "-v", "error", "-select_streams", "v:0",
-    "-show_entries", "stream=codec_name,height",
+    "-show_entries", "stream=codec_name,width,height",
     "-of", "default=nw=1", file
   ], null, function (line) { ffprobeVideo._buf += line + "\n"; }).then(function () {
     var out = ffprobeVideo._buf; ffprobeVideo._buf = "";
     var codec = (out.match(/codec_name=(\S+)/) || [, ""])[1].toLowerCase();
+    var width = parseInt((out.match(/width=(\d+)/) || [, "0"])[1], 10) || 0;
     var height = parseInt((out.match(/height=(\d+)/) || [, "0"])[1], 10) || 0;
-    return { codec: codec, height: height };
+    return { codec: codec, width: width, height: height };
   });
 }
 ffprobeVideo._buf = "";
+
+// Étiquette de résolution = PETIT côté de la vidéo (la « petite largeur »),
+// ramené au palier standard le plus proche. Une verticale 1080×1920 donne ainsi
+// 1080p (et non 1920p). Les hauteurs YouTube tombent pile sur ces paliers ;
+// le snap rattrape juste les sources non standard (TikTok/Insta).
+var RES_LADDER = [480, 720, 1080, 1440, 2160];
+function resolutionLabel(width, height) {
+  var shortSide = Math.min(width || 0, height || 0);
+  if (!shortSide) { return ""; }
+  var best = RES_LADDER[0];
+  for (var i = 1; i < RES_LADDER.length; i++) {
+    if (Math.abs(RES_LADDER[i] - shortSide) < Math.abs(best - shortSide)) {
+      best = RES_LADDER[i];
+    }
+  }
+  return best + "p";
+}
+
+// Évite d'écraser un fichier identique déjà présent : un re-téléchargement qui
+// remplace le .mp4 sur disque casse le lien média dans Premiere. On suffixe donc
+// « (1) », « (2) »… La résolution étant déjà dans le nom, deux résolutions
+// différentes ne collisionnent pas → pas de suffixe parasite dans ce cas.
+function uniqueOutPath(dest, base, ext) {
+  var p = path.join(dest, base + ext);
+  var n = 1;
+  while (fs.existsSync(p)) {
+    p = path.join(dest, base + " (" + n + ")" + ext);
+    n++;
+  }
+  return p;
+}
 
 // ---------- Décision de transcodage ----------
 // YouTube ≤1080p compatible → natif (remux mp4) ; YouTube ≥1440p → H.265 ;
@@ -479,11 +537,14 @@ function downloadOne(task) {
       var eVal = endS !== null ? endS : duration;
       var segDur = hasRange ? Math.max(eVal - sVal, 1) : duration;
 
-      var displayTitle = title + (channel ? " - " + channel : "");
+      // Ordre du nom : titre (Extrait …) - chaîne - résolution (la résolution est
+      // ajoutée plus bas, une fois la vidéo sondée).
+      var displayTitle = title;
       if (task.opts.start || task.opts.end) {
         displayTitle += " (Extrait " + (task.opts.start || "00:00") + " - " +
           (task.opts.end || "Fin") + ")";
       }
+      if (channel) { displayTitle += " - " + channel; }
       var base = safeName(displayTitle);
       task.titleEl.textContent = base;
 
@@ -545,7 +606,7 @@ function downloadOne(task) {
 
           // ----- Audio seul (WAV) -----
           if (task.opts.audio) {
-            finalOut = path.join(dest, base + ".wav");
+            finalOut = uniqueOutPath(dest, base, ".wav");
             var aCmd = ["-y", "-progress", "pipe:1"].concat(seek)
               .concat(["-i", temp]).concat(dur)
               .concat(["-vn", "-c:a", "pcm_s16le", finalOut]);
@@ -556,7 +617,11 @@ function downloadOne(task) {
           // ----- Vidéo : décision de transcodage après sonde codec/hauteur -----
           return ffprobeVideo(temp).then(function (v) {
             var needs = decideTranscode(site, v.codec, v.height);
-            finalOut = path.join(dest, base + ".mp4");
+            // Nom final : « titre - chaîne - résolution.mp4 » (+ « (n) » si doublon
+            // de même résolution déjà présent — voir uniqueOutPath).
+            var resLabel = resolutionLabel(v.width, v.height);
+            var vbase = resLabel ? base + " - " + resLabel : base;
+            finalOut = uniqueOutPath(dest, vbase, ".mp4");
 
             if (!needs && !hasRange) {
               // Compatible : simple remux vers MP4 (conteneur sûr pour Premiere).
