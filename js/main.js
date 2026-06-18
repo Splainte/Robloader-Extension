@@ -210,11 +210,27 @@ function resolveDestination() {
 
 // ---------- Exécution de processus ----------
 
+// Tue le processus ET ses enfants (yt-dlp lance souvent ffmpeg ; le tuer seul
+// laisse l'enfant tourner et garder les pipes ouverts → 'close' n'arrive jamais).
+function killTree(proc) {
+  if (!proc) { return; }
+  try {
+    if (IS_WINDOWS) {
+      spawn("taskkill", ["/pid", String(proc.pid), "/t", "/f"], { windowsHide: true });
+    } else {
+      try { process.kill(-proc.pid, "SIGKILL"); } // groupe entier (proc détaché)
+      catch (e) { proc.kill("SIGKILL"); }
+    }
+  } catch (e) { /* ok */ }
+}
+
 function runProcess(bin, args, task, onLine) {
   return new Promise(function (resolve, reject) {
     var proc;
     try {
-      proc = spawn(bin, args, { env: childEnv(), windowsHide: true });
+      // detached (hors Windows) : le proc devient chef de groupe → killTree peut
+      // tuer tout le groupe d'un coup via un pid négatif.
+      proc = spawn(bin, args, { env: childEnv(), windowsHide: true, detached: !IS_WINDOWS });
     } catch (e) {
       reject(e);
       return;
@@ -235,6 +251,12 @@ function runProcess(bin, args, task, onLine) {
     proc.stdout.on("data", feed);
     proc.stderr.on("data", feed);
     proc.on("error", reject);
+    // 'exit' se déclenche dès que LE processus quitte, même si un enfant garde
+    // un pipe ouvert (ce qui retarderait 'close'). On débloque donc la file
+    // tout de suite à l'annulation, sans attendre un éventuel ffmpeg orphelin.
+    proc.on("exit", function () {
+      if (task && task.cancelled) { task.process = null; reject(new Error("Annulé")); }
+    });
     proc.on("close", function (code) {
       if (task) { task.process = null; }
       if (task && task.cancelled) { reject(new Error("Annulé")); return; }
@@ -449,7 +471,7 @@ function addTask(url, opts) {
   btn.addEventListener("click", function () {
     if (task.done) { return; }
     task.cancelled = true;
-    if (task.process) { try { task.process.kill(); } catch (e) { /* ok */ } }
+    killTree(task.process);
     setTaskState(task, "Annulé", "err");
   });
   return task;
@@ -563,16 +585,19 @@ function downloadOne(task) {
           .concat(baseArgs).concat(picked).concat([task.url]);
       }
 
-      // Barre monotone : yt-dlp télécharge la vidéo puis l'audio (chaque flux
-      // repart de 0 %) et les fragments peuvent osciller. On ne recule jamais.
+      // Lissage de la barre : yt-dlp télécharge la vidéo puis l'audio, chaque
+      // flux repartant de 0 %. On suit la vraie valeur (progression OU vraie
+      // chute = nouveau flux) mais on ignore les petits reculs (< 5 %, simple
+      // jitter de yt-dlp). Surtout : on ne VERROUILLE jamais à 100 % (sinon un
+      // flux court fini en premier figerait la barre tout le reste du temps).
       task.dlMax = 0;
       function onDlLine(line) {
         var m = line.match(/RLPCT\s+([\d.]+)%/);
         if (m) {
           var pct = parseFloat(m[1]) / 100;
-          if (pct < task.dlMax) { pct = task.dlMax; } else { task.dlMax = pct; }
-          setBar(task, pct);
-          setTaskState(task, "Téléchargement… " + Math.round(pct * 100) + "%");
+          if (pct > task.dlMax || pct + 0.05 < task.dlMax) { task.dlMax = pct; }
+          setBar(task, task.dlMax);
+          setTaskState(task, "Téléchargement… " + Math.round(task.dlMax * 100) + "%");
         }
       }
 
