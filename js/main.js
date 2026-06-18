@@ -741,10 +741,16 @@ function httpsGetText(url) {
   });
 }
 
-function httpsDownload(url, dest) {
+function httpsDownload(url, dest, onProgress) {
   return httpsGet(url, 5).then(function (res) {
     return new Promise(function (resolve, reject) {
+      var total = parseInt(res.headers["content-length"], 10) || 0;
+      var received = 0;
       var out = fs.createWriteStream(dest);
+      res.on("data", function (chunk) {
+        received += chunk.length;
+        if (onProgress) { onProgress(received, total); }
+      });
       res.pipe(out);
       out.on("finish", function () { resolve(dest); });
       out.on("error", reject);
@@ -753,23 +759,69 @@ function httpsDownload(url, dest) {
   });
 }
 
-var updating = false;
+function logProgress(lineRef, msg, cls) {
+  if (!ui.log) { return lineRef; }
+  if (!lineRef) {
+    lineRef = document.createElement("div");
+    ui.log.appendChild(lineRef);
+  }
+  lineRef.className = cls || "";
+  lineRef.textContent = new Date().toLocaleTimeString() + "  " + msg;
+  ui.log.scrollTop = ui.log.scrollHeight;
+  return lineRef;
+}
 
-function checkUpdate() {
+function fmtBytes(b) {
+  if (b < 1024 * 1024) { return (b / 1024).toFixed(0) + " Ko"; }
+  return (b / (1024 * 1024)).toFixed(1) + " Mo";
+}
+
+var updating = false;
+var pendingUpdate = null; // { rel, latest } quand une MAJ a été détectée
+
+// Bascule le bouton entre « Vérifier les mises à jour » et « Installer vX ».
+function setUpdateButtonInstall(latest) {
+  if (latest) {
+    ui.update.textContent = "Installer v" + latest;
+    ui.update.classList.add("update-available");
+  } else {
+    ui.update.textContent = "Vérifier les mises à jour";
+    ui.update.classList.remove("update-available");
+  }
+}
+
+// Détecte une MAJ (auto ou manuel). N'installe rien : prépare seulement pendingUpdate.
+function checkUpdate(silent) {
   if (updating) { return; }
   updating = true;
   ui.update.disabled = true;
-  log("Recherche de mise à jour…");
+  if (!silent) { log("Recherche de mise à jour…"); }
   httpsGetText("https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest")
     .then(function (body) {
       var rel = JSON.parse(body);
       var latest = String(rel.tag_name || "").replace(/^v/, "");
       if (!latest) { throw new Error("release sans numéro de version"); }
       if (!isNewer(latest, currentVersion())) {
-        log("Robloader est à jour (v" + currentVersion() + ").");
+        if (!silent) { log("Robloader est à jour (v" + currentVersion() + ")."); }
         return;
       }
-      log("Nouvelle version disponible : v" + latest);
+      pendingUpdate = { rel: rel, latest: latest };
+      setUpdateButtonInstall(latest);
+      log("Mise à jour v" + latest + " disponible — clique sur « Installer v" + latest + " » pour la lancer.", "warn");
+    })
+    .catch(function (e) { if (!silent) { log("Mise à jour impossible : " + e.message, "err"); } })
+    .then(function () { updating = false; ui.update.disabled = false; });
+}
+
+// Installe la MAJ détectée. Déclenché uniquement par le clic utilisateur.
+function installUpdate() {
+  if (updating || !pendingUpdate) { return; }
+  updating = true;
+  ui.update.disabled = true;
+  var rel = pendingUpdate.rel, latest = pendingUpdate.latest;
+  Promise.resolve()
+    .then(function () {
+      log("Nouvelle version : v" + latest);
       if (!IS_WINDOWS) {
         var sh = path.join(os.tmpdir(), "robloader-install.sh");
         return httpsDownload(
@@ -784,15 +836,32 @@ function checkUpdate() {
       if (!asset) { throw new Error("pas d'installeur Windows dans la release"); }
       log("Téléchargement de " + asset.name + "…");
       var dest = path.join(os.tmpdir(), "Robloader-Extension-Setup-v" + latest + ".exe");
-      return httpsDownload(asset.browser_download_url, dest).then(function () {
+      var dlLine = null;
+      var lastPct = -1;
+      return httpsDownload(asset.browser_download_url, dest, function (received, total) {
+        var pct = total > 0 ? Math.floor(received / total * 100) : -1;
+        if (pct === lastPct) { return; }
+        lastPct = pct;
+        var msg = pct >= 0
+          ? "Téléchargement… " + pct + " % (" + fmtBytes(received) + " / " + fmtBytes(total) + ")"
+          : "Téléchargement… " + fmtBytes(received);
+        dlLine = logProgress(dlLine, msg);
+      }).then(function () {
+        if (dlLine) { dlLine.textContent = dlLine.textContent.replace(/Téléchargement.*/, "Téléchargement terminé."); }
         spawn("cmd.exe", ["/c", "start", "", dest], {
           detached: true, stdio: "ignore", windowsHide: true
         }).unref();
         log("Installeur v" + latest + " lancé : suis l'assistant, puis redémarre Premiere.", "warn");
       });
     })
+    .then(function () { pendingUpdate = null; setUpdateButtonInstall(null); })
     .catch(function (e) { log("Mise à jour impossible : " + e.message, "err"); })
     .then(function () { updating = false; ui.update.disabled = false; });
+}
+
+// Le bouton installe si une MAJ est en attente, sinon il (re)vérifie.
+function onUpdateClick() {
+  if (pendingUpdate) { installUpdate(); } else { checkUpdate(false); }
 }
 
 // ---------- Bindings UI ----------
@@ -819,7 +888,7 @@ ui.clear.addEventListener("click", function () {
     if (st && /Terminé|Annulé|Échec|import KO/.test(st.textContent)) { ui.queue.removeChild(el); }
   });
 });
-ui.update.addEventListener("click", checkUpdate);
+ui.update.addEventListener("click", onUpdateClick);
 ui.version.textContent = "v" + currentVersion();
 
 // Affiche la destination au démarrage si un projet est ouvert.
@@ -833,3 +902,6 @@ resolveDestination().then(function (d) {
   setStatus("Ouvre un projet", "paused");
   log(e.message, "warn");
 });
+
+// Vérifie discrètement les mises à jour au lancement (notification seule, sans installer).
+setTimeout(function () { checkUpdate(true); }, 2000);

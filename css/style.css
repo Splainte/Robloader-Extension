@@ -79,6 +79,13 @@ button {
 button:hover { background: #4a4a4a; }
 button:disabled { opacity: 0.5; cursor: default; }
 button.small { padding: 2px 8px; font-size: 11px; }
+button.update-available {
+  background: #46411d;
+  border-color: #6b6230;
+  color: #dcd48f;
+  font-weight: 600;
+}
+button.update-available:hover { background: #5a5326; }
 
 #download {
   background: #005cc8;
