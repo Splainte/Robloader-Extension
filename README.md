@@ -1,6 +1,6 @@
 # ⚙️ Robloader Extension
 
-**Le téléchargeur [Robloader](https://github.com/Splainte/Robloader), directement
+**Le téléchargeur Robloader, mais directement
 dans un panneau Adobe Premiere Pro.**
 
 Colle une URL (YouTube, TikTok, Instagram, X/Twitter, Weibo) : Robloader télécharge
