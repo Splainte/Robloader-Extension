@@ -295,19 +295,20 @@ function probeInfo(url, baseArgs, cookieArgs, task) {
 }
 
 function ffprobeVideo(file) {
+  // Buffer local (pas de variable partagée : deux téléchargements peuvent
+  // sonder leurs fichiers en même temps depuis la file parallèle).
+  var out = "";
   return runProcess(FFPROBE, [
     "-v", "error", "-select_streams", "v:0",
     "-show_entries", "stream=codec_name,width,height",
     "-of", "default=nw=1", file
-  ], null, function (line) { ffprobeVideo._buf += line + "\n"; }).then(function () {
-    var out = ffprobeVideo._buf; ffprobeVideo._buf = "";
+  ], null, function (line) { out += line + "\n"; }).then(function () {
     var codec = (out.match(/codec_name=(\S+)/) || [, ""])[1].toLowerCase();
     var width = parseInt((out.match(/width=(\d+)/) || [, "0"])[1], 10) || 0;
     var height = parseInt((out.match(/height=(\d+)/) || [, "0"])[1], 10) || 0;
     return { codec: codec, width: width, height: height };
   });
 }
-ffprobeVideo._buf = "";
 
 // Étiquette de résolution = PETIT côté de la vidéo (la « petite largeur »),
 // ramené au palier standard le plus proche. Une verticale 1080×1920 donne ainsi
@@ -385,15 +386,31 @@ function h265Candidates() {
 }
 
 // Encodeur retenu lors d'un transcodage réussi (label), pour aller droit au but.
+// Mémorisé entre les sessions (localStorage) : plus de premier essai raté à
+// chaque redémarrage de Premiere. Seuls les GPU sont mémorisés — persister
+// « CPU » verrouillerait le CPU pour toujours après une panne GPU passagère.
+var ENCODER_KEY = "robloader.h265encoder";
 var selectedEncoderLabel = null;
+try { selectedEncoderLabel = window.localStorage.getItem(ENCODER_KEY) || null; } catch (e) { /* ok */ }
+
+function rememberEncoder(label) {
+  selectedEncoderLabel = label;
+  try {
+    if (label === "CPU") { window.localStorage.removeItem(ENCODER_KEY); }
+    else { window.localStorage.setItem(ENCODER_KEY, label); }
+  } catch (e) { /* ok */ }
+}
 
 function encodeH265(task, temp, finalOut, seek, dur, segDur) {
   var all = h265Candidates();
   var list = all;
-  if (selectedEncoderLabel) {
+  if (selectedEncoderLabel === "CPU") {
+    list = all.filter(function (c) { return c.label === "CPU"; });
+  } else if (selectedEncoderLabel) {
     var chosen = all.filter(function (c) { return c.label === selectedEncoderLabel; });
     var cpu = all.filter(function (c) { return c.label === "CPU"; });
-    list = (selectedEncoderLabel === "CPU") ? cpu : chosen.concat(cpu);
+    // Label mémorisé inconnu ici (autre OS/machine) → cascade complète.
+    list = chosen.length ? chosen.concat(cpu) : all;
   }
 
   var i = 0;
@@ -426,7 +443,7 @@ function encodeH265(task, temp, finalOut, seek, dur, segDur) {
     }).then(function (code) {
       if (task.cancelled) { throw new Error("Annulé"); }
       if (code === 0) {
-        selectedEncoderLabel = cand.label;
+        rememberEncoder(cand.label);
         log("Encodé en H.265 — " + cand.label);
         return;
       }
@@ -533,24 +550,70 @@ function setBar(task, frac, done) {
   if (done) { task.barEl.className = "bar done"; }
 }
 
-// Chaîne de téléchargements : un seul à la fois (évite de saturer le CPU/réseau).
-var chain = Promise.resolve();
+// ---------- Mise à jour auto de yt-dlp ----------
+// YouTube casse régulièrement ses extracteurs ; le binaire yt-dlp sait se
+// mettre à jour tout seul (-U). On le fait à chaque ouverture du panneau,
+// AVANT le premier téléchargement (la file attend ytdlpReady). Garde-fou de
+// 60 s : si le réseau traîne, on abandonne et on garde la version embarquée.
+var ytdlpReady = (function () {
+  // yt-dlp du PATH système (mode dev) : pas le nôtre, on n'y touche pas.
+  if (YTDLP.indexOf(extDir) !== 0) { return Promise.resolve(); }
+  var holder = { cancelled: false, process: null };
+  var lines = [];
+  var timer = setTimeout(function () {
+    holder.cancelled = true;
+    killTree(holder.process);
+  }, 60000);
+  return runProcess(YTDLP, ["-U"], holder, function (line) { lines.push(line.trim()); })
+    .then(function (code) {
+      clearTimeout(timer);
+      var all = lines.join(" ");
+      if (code === 0 && /updated yt-dlp to/i.test(all)) {
+        var m = all.match(/updated yt-dlp to ([^\s!,]+)/i);
+        log("yt-dlp mis à jour" + (m ? " → " + m[1] : "") + ".");
+      }
+      // Déjà à jour ou échec réseau : silencieux, on ne bloque rien.
+    }, function () {
+      clearTimeout(timer);
+      log("Mise à jour yt-dlp sautée (réseau ?) — on continue avec la version en place.", "warn");
+    });
+})();
 
-function enqueue(url, opts) {
-  var task = addTask(url, opts);
-  chain = chain.then(function () {
-    if (task.cancelled) { task.done = true; task.btn.style.display = "none"; return; }
-    return downloadOne(task).catch(function (e) {
+// ---------- File d'attente : 2 téléchargements en parallèle max ----------
+// Comme l'app desktop (elle en autorise 3) sans saturer CPU/réseau du panneau.
+// Les suivants attendent leur tour dans queueWaiting.
+var MAX_PARALLEL = 2;
+var queueWaiting = [];
+var queueActive = 0;
+
+function pump() {
+  while (queueActive < MAX_PARALLEL && queueWaiting.length) {
+    var task = queueWaiting.shift();
+    if (task.cancelled) { task.done = true; task.btn.style.display = "none"; continue; }
+    runTask(task);
+  }
+}
+
+function runTask(task) {
+  queueActive++;
+  downloadOne(task)
+    .catch(function (e) {
       if (!task.cancelled) {
         setTaskState(task, "Échec : " + e.message, "err");
-        log("Échec " + url + " : " + e.message, "err");
+        log("Échec " + task.url + " : " + e.message, "err");
       }
       // Tâche finie (échec ou annulée) : le bouton Annuler n'a plus de sens
       // et un clic tardif écraserait le message « Échec : … ».
       task.done = true;
       task.btn.style.display = "none";
-    });
-  });
+    })
+    .then(function () { queueActive--; pump(); });
+}
+
+function enqueue(url, opts) {
+  var task = addTask(url, opts);
+  queueWaiting.push(task);
+  ytdlpReady.then(pump);
 }
 
 function downloadOne(task) {
@@ -622,10 +685,14 @@ function downloadOne(task) {
       var base = safeName(displayTitle);
       task.titleEl.textContent = base;
 
-      var tempBase = path.join(dest, "temp_" + vid);
+      // Le préfixe inclut le n° de tâche : deux téléchargements simultanés de la
+      // même vidéo ne partagent pas leurs fichiers temporaires (sinon le
+      // nettoyage de l'un effacerait le téléchargement en cours de l'autre).
+      var tmpPrefix = "temp_" + vid + "_" + task.id;
+      var tempBase = path.join(dest, tmpPrefix);
       var tmpGlob = function () {
         return fs.readdirSync(dest).filter(function (n) {
-          return n.indexOf("temp_" + vid) === 0;
+          return n.indexOf(tmpPrefix) === 0;
         }).map(function (n) { return path.join(dest, n); });
       };
 
@@ -966,14 +1033,29 @@ function onUpdateClick() {
 
 // ---------- Bindings UI ----------
 
+// Timecode accepté : secondes (« 90 »), mm:ss ou hh:mm:ss.
+var TC_RE = /^\d+(:\d{1,2}){0,2}$/;
+
 function onDownloadClick() {
   var url = ui.url.value.trim();
   if (!url) { setStatus("Colle une URL", "err"); return; }
+  var start = ui.start.value.trim();
+  var end = ui.end.value.trim();
+  // Validation de l'extrait AVANT la mise en file : un « abc » silencieusement
+  // lu comme 00:00 ou un début après la fin donnerait un fichier inattendu.
+  if ((start && !TC_RE.test(start)) || (end && !TC_RE.test(end))) {
+    setStatus("Extrait : format mm:ss (ex. 01:30)", "err");
+    return;
+  }
+  if (start && end && parseTimecode(start) >= parseTimecode(end)) {
+    setStatus("Extrait : le début doit précéder la fin", "err");
+    return;
+  }
   enqueue(url, {
     quality: ui.quality.value,
     audio: ui.audio.checked,
-    start: ui.start.value.trim(),
-    end: ui.end.value.trim()
+    start: start,
+    end: end
   });
   ui.url.value = "";
   setStatus("En file", "ok");

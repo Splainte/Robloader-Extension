@@ -28,7 +28,11 @@ pas de choix de dossier, pas de réglages superflus, l'extension fait ce qu'il f
 - **Audio seul (WAV)** — pour récupérer juste la bande-son.
 - **Cookies automatiques** — utilise ta session navigateur pour débloquer la 4K, les
   vidéos restreintes ou les contenus privés (Instagram, X).
-- **File d'attente** — enchaîne plusieurs téléchargements, chacun annulable.
+- **File d'attente** — jusqu'à deux téléchargements en parallèle, les suivants
+  attendent leur tour ; chacun annulable.
+- **yt-dlp toujours à jour** — le téléchargeur se met à jour tout seul à
+  l'ouverture du panneau (quand YouTube casse quelque chose, la correction
+  arrive sans attendre une nouvelle version de l'extension).
 - **Mises à jour automatiques** — bouton dédié en bas du panneau.
 
 ### Transcodage (automatique, sans réglage)
