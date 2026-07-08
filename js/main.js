@@ -5,9 +5,10 @@
  * l'importe dans le chutier miroir ELEMENTS/Robloader du projet ouvert.
  *
  * Différences avec l'app desktop Robloader :
- *  - destination FIXE : <parent du .prproj>/ELEMENTS/Robloader (le .prproj vit
- *    dans PROJETS/, on remonte d'un cran) — aucun choix de dossier ;
- *  - import automatique dans Premiere (chutier ELEMENTS/Robloader) ;
+ *  - destination AUTOMATIQUE, aucun choix de dossier : ELEMENTS/Robloader si le
+ *    .prproj vit dans PROJETS/ (archi standard), sinon Robloader/ à côté du
+ *    .prproj (archi libre) — voir resolveDestination ;
+ *  - import automatique dans Premiere (chutier miroir du dossier disque) ;
  *  - transcodage simplifié et automatique (voir decideTranscode) ;
  *  - un seul thème, pas de couleur par source, pas de sous-titres/miniature.
  *
@@ -79,16 +80,23 @@ function resolveBinary(name) {
 var YTDLP = resolveBinary("yt-dlp");
 var FFMPEG = resolveBinary("ffmpeg");
 var FFPROBE = resolveBinary("ffprobe");
-var DENO = resolveBinary("deno");
 
 // Deno présent → nsig résolu → 4K/1440p possibles. Sinon plafond 1080p.
+// (Deno n'est jamais appelé directement : yt-dlp le trouve via le PATH enrichi.)
 var HAS_JS = fs.existsSync(path.join(platDir(), IS_WINDOWS ? "deno.exe" : "deno"));
 
 // PATH enrichi du dossier des binaires pour que yt-dlp trouve ffmpeg/deno.
+// NB : sous Windows la variable s'appelle souvent « Path » — on retrouve la clé
+// existante sans tenir compte de la casse, sinon on créerait un doublon
+// PATH/Path et l'enfant pourrait ne jamais voir le dossier des binaires.
 function childEnv() {
   var env = {};
-  for (var k in process.env) { env[k] = process.env[k]; }
-  env.PATH = platDir() + (IS_WINDOWS ? ";" : ":") + (env.PATH || "");
+  var pathKey = "PATH";
+  for (var k in process.env) {
+    env[k] = process.env[k];
+    if (k.toUpperCase() === "PATH") { pathKey = k; }
+  }
+  env[pathKey] = platDir() + (IS_WINDOWS ? ";" : ":") + (env[pathKey] || "");
   return env;
 }
 
@@ -143,7 +151,8 @@ function setStatus(text, cls) {
 }
 
 function log(msg, cls) {
-  if (!ui.log) { return; }
+  // Garde : window.onerror peut appeler log() avant que `ui` soit construit.
+  if (typeof ui === "undefined" || !ui || !ui.log) { return; }
   var line = document.createElement("div");
   line.className = cls || "";
   line.textContent = new Date().toLocaleTimeString() + "  " + msg;
@@ -185,7 +194,7 @@ function levenshtein(a, b) {
 }
 
 // Racine du projet montage depuis le .prproj ouvert, + dossier de destination.
-// Deux modes :
+// Deux modes (le chutier Premiere `bin` reflète le dossier disque) :
 //  • Architecture standard  (<racine>/PROJETS/<projet.prproj>) → ELEMENTS/Robloader
 //  • Architecture libre (tout autre organisation)              → <dossier du .prproj>/Robloader
 function resolveDestination() {
@@ -200,11 +209,12 @@ function resolveDestination() {
     var dirName = path.basename(projDir);
     if (levenshtein(normFolderName(dirName), "projet") <= 1) {
       var root = path.resolve(projDir, "..");
-      return { root: root, dest: path.join(root, "ELEMENTS", "Robloader") };
+      return { root: root, dest: path.join(root, "ELEMENTS", "Robloader"), bin: BIN_SEGMENTS };
     }
-    // Archi libre : on pose les fichiers à côté du .prproj dans un sous-dossier Robloader.
+    // Archi libre : on pose les fichiers à côté du .prproj dans un sous-dossier
+    // Robloader, et le chutier Premiere s'appelle pareil (pas ELEMENTS/…).
     log("Architecture libre (dossier « " + dirName + " ») → destination : Robloader/ à côté du .prproj", "warn");
-    return { root: projDir, dest: path.join(projDir, "Robloader") };
+    return { root: projDir, dest: path.join(projDir, "Robloader"), bin: "Robloader" };
   });
 }
 
@@ -226,6 +236,9 @@ function killTree(proc) {
 
 function runProcess(bin, args, task, onLine) {
   return new Promise(function (resolve, reject) {
+    // Tâche déjà annulée : ne pas lancer l'étape suivante (sinon une annulation
+    // entre deux processus laissait p.ex. tout le transcodage s'exécuter).
+    if (task && task.cancelled) { reject(new Error("Annulé")); return; }
     var proc;
     try {
       // detached (hors Windows) : le proc devient chef de groupe → killTree peut
@@ -258,6 +271,8 @@ function runProcess(bin, args, task, onLine) {
       if (task && task.cancelled) { task.process = null; reject(new Error("Annulé")); }
     });
     proc.on("close", function (code) {
+      // Dernière ligne sans retour chariot (ffmpeg y met parfois l'erreur finale).
+      if (buf && onLine) { onLine(buf); buf = ""; }
       if (task) { task.process = null; }
       if (task && task.cancelled) { reject(new Error("Annulé")); return; }
       resolve(code);
@@ -280,19 +295,20 @@ function probeInfo(url, baseArgs, cookieArgs, task) {
 }
 
 function ffprobeVideo(file) {
+  // Buffer local (pas de variable partagée : deux téléchargements peuvent
+  // sonder leurs fichiers en même temps depuis la file parallèle).
+  var out = "";
   return runProcess(FFPROBE, [
     "-v", "error", "-select_streams", "v:0",
     "-show_entries", "stream=codec_name,width,height",
     "-of", "default=nw=1", file
-  ], null, function (line) { ffprobeVideo._buf += line + "\n"; }).then(function () {
-    var out = ffprobeVideo._buf; ffprobeVideo._buf = "";
+  ], null, function (line) { out += line + "\n"; }).then(function () {
     var codec = (out.match(/codec_name=(\S+)/) || [, ""])[1].toLowerCase();
     var width = parseInt((out.match(/width=(\d+)/) || [, "0"])[1], 10) || 0;
     var height = parseInt((out.match(/height=(\d+)/) || [, "0"])[1], 10) || 0;
     return { codec: codec, width: width, height: height };
   });
 }
-ffprobeVideo._buf = "";
 
 // Étiquette de résolution = PETIT côté de la vidéo (la « petite largeur »),
 // ramené au palier standard le plus proche. Une verticale 1080×1920 donne ainsi
@@ -355,9 +371,11 @@ function h265Candidates() {
     ];
   }
   return [
+    // -b:v 0 obligatoire avec -rc vbr -cq : sinon nvenc garde son bitrate cible
+    // par défaut (2 Mb/s) et la qualité est plafonnée quel que soit le -cq.
     { label: "GPU NVIDIA", aenc: aenc,
       venc: ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "18",
-        "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] },
+        "-b:v", "0", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"] },
     { label: "GPU Intel", aenc: aenc,
       venc: ["-c:v", "hevc_qsv", "-global_quality", "18", "-pix_fmt", "nv12", "-tag:v", "hvc1"] },
     { label: "GPU AMD", aenc: aenc,
@@ -368,15 +386,31 @@ function h265Candidates() {
 }
 
 // Encodeur retenu lors d'un transcodage réussi (label), pour aller droit au but.
+// Mémorisé entre les sessions (localStorage) : plus de premier essai raté à
+// chaque redémarrage de Premiere. Seuls les GPU sont mémorisés — persister
+// « CPU » verrouillerait le CPU pour toujours après une panne GPU passagère.
+var ENCODER_KEY = "robloader.h265encoder";
 var selectedEncoderLabel = null;
+try { selectedEncoderLabel = window.localStorage.getItem(ENCODER_KEY) || null; } catch (e) { /* ok */ }
+
+function rememberEncoder(label) {
+  selectedEncoderLabel = label;
+  try {
+    if (label === "CPU") { window.localStorage.removeItem(ENCODER_KEY); }
+    else { window.localStorage.setItem(ENCODER_KEY, label); }
+  } catch (e) { /* ok */ }
+}
 
 function encodeH265(task, temp, finalOut, seek, dur, segDur) {
   var all = h265Candidates();
   var list = all;
-  if (selectedEncoderLabel) {
+  if (selectedEncoderLabel === "CPU") {
+    list = all.filter(function (c) { return c.label === "CPU"; });
+  } else if (selectedEncoderLabel) {
     var chosen = all.filter(function (c) { return c.label === selectedEncoderLabel; });
     var cpu = all.filter(function (c) { return c.label === "CPU"; });
-    list = (selectedEncoderLabel === "CPU") ? cpu : chosen.concat(cpu);
+    // Label mémorisé inconnu ici (autre OS/machine) → cascade complète.
+    list = chosen.length ? chosen.concat(cpu) : all;
   }
 
   var i = 0;
@@ -387,7 +421,8 @@ function encodeH265(task, temp, finalOut, seek, dur, segDur) {
     setTaskState(task, label);
     setBar(task, 0);
     var cmd = ["-y", "-progress", "pipe:1"].concat(seek)
-      .concat(["-i", temp]).concat(dur).concat(cand.venc).concat(cand.aenc).concat([finalOut]);
+      .concat(["-i", temp]).concat(dur).concat(cand.venc).concat(cand.aenc)
+      .concat(["-movflags", "+faststart", finalOut]);
     return runProcess(FFMPEG, cmd, task, function (line) {
       var m = line.match(/out_time_us=(\d+)/);
       if (m && segDur > 0) {
@@ -408,7 +443,7 @@ function encodeH265(task, temp, finalOut, seek, dur, segDur) {
     }).then(function (code) {
       if (task.cancelled) { throw new Error("Annulé"); }
       if (code === 0) {
-        selectedEncoderLabel = cand.label;
+        rememberEncoder(cand.label);
         log("Encodé en H.265 — " + cand.label);
         return;
       }
@@ -439,33 +474,62 @@ function parseTimecode(tc) {
   return s;
 }
 
+// Translittération des accents AVANT filtrage : « Vidéo génération » doit donner
+// « Video generation », pas « Vido gnration ».
+var ACCENT_MAP = {
+  "à": "a", "â": "a", "ä": "a", "á": "a", "ã": "a",
+  "é": "e", "è": "e", "ê": "e", "ë": "e",
+  "î": "i", "ï": "i", "í": "i",
+  "ô": "o", "ö": "o", "ó": "o", "õ": "o",
+  "ù": "u", "û": "u", "ü": "u", "ú": "u",
+  "ç": "c", "ñ": "n", "œ": "oe", "æ": "ae", "ÿ": "y"
+};
+
 function safeName(s) {
   var out = "";
   for (var i = 0; i < s.length; i++) {
     var c = s.charAt(i);
-    if (/[a-z0-9 .\-_()]/i.test(c)) { out += c; }
+    var lower = c.toLowerCase();
+    if (ACCENT_MAP[lower]) {
+      var t = ACCENT_MAP[lower];
+      out += (c === lower) ? t : t.charAt(0).toUpperCase() + t.slice(1);
+    } else if (/[a-z0-9 .\-_()']/i.test(c)) {
+      out += c;
+    }
   }
-  return out.replace(/\s+$/, "") || "video";
+  return out.replace(/\s+/g, " ").replace(/\s+$/, "").replace(/^\s+/, "") || "video";
 }
 
 function addTask(url, opts) {
   var id = ++taskSeq;
   var frame = document.createElement("div");
   frame.className = "task";
-  frame.innerHTML =
-    '<div class="title">' + url + '</div>' +
-    '<div class="state">En attente…</div>' +
-    '<div class="barwrap"><div class="bar"></div></div>';
+  // Construction DOM (jamais innerHTML : l'URL vient de l'utilisateur et le
+  // panneau a accès à Node — du HTML dans l'URL serait exécuté).
+  var titleEl = document.createElement("div");
+  titleEl.className = "title";
+  titleEl.textContent = url;
+  var stateEl = document.createElement("div");
+  stateEl.className = "state";
+  stateEl.textContent = "En attente…";
+  var barWrap = document.createElement("div");
+  barWrap.className = "barwrap";
+  var barEl = document.createElement("div");
+  barEl.className = "bar";
+  barWrap.appendChild(barEl);
   var btn = document.createElement("button");
   btn.textContent = "Annuler";
+  frame.appendChild(titleEl);
+  frame.appendChild(stateEl);
+  frame.appendChild(barWrap);
   frame.appendChild(btn);
   ui.queue.insertBefore(frame, ui.queue.firstChild);
 
   var task = {
     id: id, url: url, opts: opts, cancelled: false, process: null,
-    titleEl: frame.querySelector(".title"),
-    stateEl: frame.querySelector(".state"),
-    barEl: frame.querySelector(".bar"),
+    titleEl: titleEl,
+    stateEl: stateEl,
+    barEl: barEl,
     btn: btn
   };
   btn.addEventListener("click", function () {
@@ -486,30 +550,81 @@ function setBar(task, frac, done) {
   if (done) { task.barEl.className = "bar done"; }
 }
 
-// Chaîne de téléchargements : un seul à la fois (évite de saturer le CPU/réseau).
-var chain = Promise.resolve();
+// ---------- Mise à jour auto de yt-dlp ----------
+// YouTube casse régulièrement ses extracteurs ; le binaire yt-dlp sait se
+// mettre à jour tout seul (-U). On le fait à chaque ouverture du panneau,
+// AVANT le premier téléchargement (la file attend ytdlpReady). Garde-fou de
+// 60 s : si le réseau traîne, on abandonne et on garde la version embarquée.
+var ytdlpReady = (function () {
+  // yt-dlp du PATH système (mode dev) : pas le nôtre, on n'y touche pas.
+  if (YTDLP.indexOf(extDir) !== 0) { return Promise.resolve(); }
+  var holder = { cancelled: false, process: null };
+  var lines = [];
+  var timer = setTimeout(function () {
+    holder.cancelled = true;
+    killTree(holder.process);
+  }, 60000);
+  return runProcess(YTDLP, ["-U"], holder, function (line) { lines.push(line.trim()); })
+    .then(function (code) {
+      clearTimeout(timer);
+      var all = lines.join(" ");
+      if (code === 0 && /updated yt-dlp to/i.test(all)) {
+        var m = all.match(/updated yt-dlp to ([^\s!,]+)/i);
+        log("yt-dlp mis à jour" + (m ? " → " + m[1] : "") + ".");
+      }
+      // Déjà à jour ou échec réseau : silencieux, on ne bloque rien.
+    }, function () {
+      clearTimeout(timer);
+      log("Mise à jour yt-dlp sautée (réseau ?) — on continue avec la version en place.", "warn");
+    });
+})();
+
+// ---------- File d'attente : 2 téléchargements en parallèle max ----------
+// Comme l'app desktop (elle en autorise 3) sans saturer CPU/réseau du panneau.
+// Les suivants attendent leur tour dans queueWaiting.
+var MAX_PARALLEL = 2;
+var queueWaiting = [];
+var queueActive = 0;
+
+function pump() {
+  while (queueActive < MAX_PARALLEL && queueWaiting.length) {
+    var task = queueWaiting.shift();
+    if (task.cancelled) { task.done = true; task.btn.style.display = "none"; continue; }
+    runTask(task);
+  }
+}
+
+function runTask(task) {
+  queueActive++;
+  downloadOne(task)
+    .catch(function (e) {
+      if (!task.cancelled) {
+        setTaskState(task, "Échec : " + e.message, "err");
+        log("Échec " + task.url + " : " + e.message, "err");
+      }
+      // Tâche finie (échec ou annulée) : le bouton Annuler n'a plus de sens
+      // et un clic tardif écraserait le message « Échec : … ».
+      task.done = true;
+      task.btn.style.display = "none";
+    })
+    .then(function () { queueActive--; pump(); });
+}
 
 function enqueue(url, opts) {
   var task = addTask(url, opts);
-  chain = chain.then(function () {
-    if (task.cancelled) { return; }
-    return downloadOne(task).catch(function (e) {
-      if (!task.cancelled) {
-        setTaskState(task, "Échec : " + e.message, "err");
-        log("Échec " + url + " : " + e.message, "err");
-      }
-    });
-  });
+  queueWaiting.push(task);
+  ytdlpReady.then(pump);
 }
 
 function downloadOne(task) {
   var site = detectSite(task.url);
   var isYoutube = site === "youtube";
-  var dest;
+  var dest, binPath;
 
   setTaskState(task, "Analyse du projet…");
   return resolveDestination().then(function (d) {
     dest = d.dest;
+    binPath = d.bin;
     fs.mkdirSync(dest, { recursive: true });
 
     // Hauteur cible (YouTube seulement ; sans Deno plafond 1080p).
@@ -570,10 +685,14 @@ function downloadOne(task) {
       var base = safeName(displayTitle);
       task.titleEl.textContent = base;
 
-      var tempBase = path.join(dest, "temp_" + vid);
+      // Le préfixe inclut le n° de tâche : deux téléchargements simultanés de la
+      // même vidéo ne partagent pas leurs fichiers temporaires (sinon le
+      // nettoyage de l'un effacerait le téléchargement en cours de l'autre).
+      var tmpPrefix = "temp_" + vid + "_" + task.id;
+      var tempBase = path.join(dest, tmpPrefix);
       var tmpGlob = function () {
         return fs.readdirSync(dest).filter(function (n) {
-          return n.indexOf("temp_" + vid) === 0;
+          return n.indexOf(tmpPrefix) === 0;
         }).map(function (n) { return path.join(dest, n); });
       };
 
@@ -603,6 +722,14 @@ function downloadOne(task) {
 
       function cleanupTemp() {
         tmpGlob().forEach(function (p) { try { fs.unlinkSync(p); } catch (e) { /* ok */ } });
+      }
+
+      // Après échec/annulation : purge des temp_* — tout de suite, puis une 2e
+      // passe différée (Windows met un instant à relâcher les verrous du
+      // processus tué, le premier unlink peut échouer en silence).
+      function cleanupTempLater() {
+        cleanupTemp();
+        setTimeout(cleanupTemp, 2000);
       }
 
       setTaskState(task, "Téléchargement…");
@@ -688,18 +815,24 @@ function downloadOne(task) {
           setBar(task, 1, true);
           setTaskState(task, "Import dans Premiere…", "");
           return evalScript(
-            'ROBLOADER.importFile("' + escapeJsxString(finalOut) + '","' + BIN_SEGMENTS + '")'
+            'ROBLOADER.importFile("' + escapeJsxString(finalOut) + '","' + binPath + '")'
           ).then(function (res) {
             task.done = true;
             task.btn.style.display = "none";
             if (res === "OK") {
-              setTaskState(task, "Terminé ✓ importé dans ELEMENTS/Robloader", "ok");
+              setTaskState(task, "Terminé ✓ importé dans " + binPath, "ok");
               log("Terminé : " + path.basename(finalOut));
             } else {
               setTaskState(task, "Téléchargé, import KO → " + res, "err");
               log("Import KO " + path.basename(finalOut) + " : " + res, "err");
             }
           });
+        })
+        .catch(function (e) {
+          // Échec ou annulation : ne pas laisser traîner les temp_* (.mp4/.part)
+          // dans le dossier du projet.
+          cleanupTempLater();
+          throw e;
         });
     });
   });
@@ -776,14 +909,19 @@ function httpsDownload(url, dest, onProgress) {
       var total = parseInt(res.headers["content-length"], 10) || 0;
       var received = 0;
       var out = fs.createWriteStream(dest);
+      function fail(err) {
+        try { out.destroy(); } catch (e) { /* ok */ }
+        try { fs.unlinkSync(dest); } catch (e) { /* ok */ }
+        reject(err);
+      }
       res.on("data", function (chunk) {
         received += chunk.length;
         if (onProgress) { onProgress(received, total); }
       });
       res.pipe(out);
       out.on("finish", function () { resolve(dest); });
-      out.on("error", reject);
-      res.on("error", reject);
+      out.on("error", fail);
+      res.on("error", fail);
     });
   });
 }
@@ -895,14 +1033,29 @@ function onUpdateClick() {
 
 // ---------- Bindings UI ----------
 
+// Timecode accepté : secondes (« 90 »), mm:ss ou hh:mm:ss.
+var TC_RE = /^\d+(:\d{1,2}){0,2}$/;
+
 function onDownloadClick() {
   var url = ui.url.value.trim();
   if (!url) { setStatus("Colle une URL", "err"); return; }
+  var start = ui.start.value.trim();
+  var end = ui.end.value.trim();
+  // Validation de l'extrait AVANT la mise en file : un « abc » silencieusement
+  // lu comme 00:00 ou un début après la fin donnerait un fichier inattendu.
+  if ((start && !TC_RE.test(start)) || (end && !TC_RE.test(end))) {
+    setStatus("Extrait : format mm:ss (ex. 01:30)", "err");
+    return;
+  }
+  if (start && end && parseTimecode(start) >= parseTimecode(end)) {
+    setStatus("Extrait : le début doit précéder la fin", "err");
+    return;
+  }
   enqueue(url, {
     quality: ui.quality.value,
     audio: ui.audio.checked,
-    start: ui.start.value.trim(),
-    end: ui.end.value.trim()
+    start: start,
+    end: end
   });
   ui.url.value = "";
   setStatus("En file", "ok");
