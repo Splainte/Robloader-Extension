@@ -250,13 +250,19 @@ function runProcess(bin, args, task, onLine) {
     }
     if (task) { task.process = proc; }
     var buf = "";
+    // killTree() ne vide pas rétroactivement les données déjà reçues dans le
+    // pipe stdout : après un clic Annuler, quelques chunks (ex. le prochain
+    // « RLPCT xx% ») arrivent encore et appelaient setTaskState, écrasant le
+    // texte « Annulé » posé par le clic — la tâche restait figée sur
+    // « Téléchargement… X% » et ne matchait plus le filtre du bouton Nettoyer.
+    // On ignore donc toute ligne dès que la tâche est annulée.
     function feed(chunk) {
       buf += chunk;
       var idx;
       while ((idx = buf.search(/[\r\n]/)) !== -1) {
         var line = buf.slice(0, idx);
         buf = buf.slice(idx + 1);
-        if (line && onLine) { onLine(line); }
+        if (line && onLine && !(task && task.cancelled)) { onLine(line); }
       }
     }
     proc.stdout.setEncoding("utf8");
@@ -272,7 +278,7 @@ function runProcess(bin, args, task, onLine) {
     });
     proc.on("close", function (code) {
       // Dernière ligne sans retour chariot (ffmpeg y met parfois l'erreur finale).
-      if (buf && onLine) { onLine(buf); buf = ""; }
+      if (buf && onLine && !(task && task.cancelled)) { onLine(buf); buf = ""; }
       if (task) { task.process = null; }
       if (task && task.cancelled) { reject(new Error("Annulé")); return; }
       resolve(code);
@@ -598,7 +604,12 @@ function runTask(task) {
   queueActive++;
   downloadOne(task)
     .catch(function (e) {
-      if (!task.cancelled) {
+      if (task.cancelled) {
+        // Filet de sécurité : re-force « Annulé » même si une course quelque
+        // part a laissé un autre texte affiché — sinon le bouton Nettoyer
+        // (qui filtre sur ce texte) ne peut plus jamais retirer la tâche.
+        setTaskState(task, "Annulé", "err");
+      } else {
         setTaskState(task, "Échec : " + e.message, "err");
         log("Échec " + task.url + " : " + e.message, "err");
       }
