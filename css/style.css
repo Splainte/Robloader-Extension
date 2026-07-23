@@ -1,5 +1,22 @@
 * { box-sizing: border-box; }
 
+/* Scrollbars façon Premiere : pas de flèches, piste sombre, pouce gris arrondi
+   détaché des bords (bordure transparente + background-clip). Le moteur CEP est
+   du Chromium, les pseudo-éléments ::-webkit-scrollbar y sont donc supportés. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner { background: #1a1a1a; }
+::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+  min-height: 24px;
+}
+::-webkit-scrollbar-thumb:hover   { background: #5e5e5e; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:active  { background: #6e6e6e; background-clip: padding-box; }
+
 body {
   margin: 0;
   padding: 10px;
@@ -37,8 +54,6 @@ h1 { font-size: 14px; margin: 0; }
 }
 .target-row .label { color: #d6d6d6; }
 
-.field { margin-bottom: 8px; }
-
 input[type="text"], select {
   background: #1a1a1a;
   color: #d6d6d6;
@@ -47,7 +62,10 @@ input[type="text"], select {
   padding: 5px 8px;
   font-size: 12px;
 }
-#url { width: 100%; }
+/* Ligne URL : le champ prend toute la place restante, la qualité juste après. */
+.url-row { flex-wrap: nowrap; }
+#url { flex: 1; min-width: 0; }
+#quality { flex: none; padding: 5px 4px; font-size: 11px; }
 .tc { width: 64px; text-align: center; }
 
 .row {
@@ -60,11 +78,13 @@ input[type="text"], select {
 .row .label { color: #d6d6d6; }
 .dash { color: #9a9a9a; }
 .chk { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+/* Colle l'élément au bord droit de sa ligne (Nettoyer, Transcodage forcé). */
+.push-right { margin-left: auto; }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
@@ -86,6 +106,10 @@ button.update-available {
   font-weight: 600;
 }
 button.update-available:hover { background: #5a5326; }
+
+/* Les trois boutons de la barre d'action ont la même hauteur (padding commun) :
+   Télécharger / Télécharger audio à gauche, Nettoyer collé à droite. */
+#download, #download-audio, #clear { padding: 5px 12px; white-space: nowrap; }
 
 #download {
   background: #005cc8;

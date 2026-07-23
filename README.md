@@ -21,11 +21,12 @@ pas de choix de dossier, pas de réglages superflus, l'extension fait ce qu'il f
   Aucun dossier à choisir.
 - **Import automatique dans Premiere** — le fichier apparaît dans le chutier miroir
   `ELEMENTS/Robloader` dès qu'il est prêt.
-- **Transcodage intelligent et automatique** (voir ci-dessous) — H.265 seulement
-  quand c'est nécessaire.
+- **Transcodage forcé** (coché par défaut) — tout est ré-encodé en H.265, quelle
+  que soit la résolution : plus d'artefacts de décodage Premiere (voir ci-dessous).
+  Décochable pour retrouver le transcodage « seulement si nécessaire ».
 - **Extraction d'un segment** — début/fin optionnels pour ne récupérer qu'un passage.
 - **Choix de la qualité** (YouTube) — Max (jusqu'à 4K), 1440p, 1080p, 720p, 480p.
-- **Audio seul (WAV)** — pour récupérer juste la bande-son.
+- **Télécharger audio (WAV)** — bouton dédié pour récupérer juste la bande-son.
 - **Cookies automatiques** — utilise ta session navigateur pour débloquer la 4K, les
   vidéos restreintes ou les contenus privés (Instagram, X).
 - **File d'attente** — jusqu'à deux téléchargements en parallèle, les suivants
@@ -35,7 +36,19 @@ pas de choix de dossier, pas de réglages superflus, l'extension fait ce qu'il f
   arrive sans attendre une nouvelle version de l'extension).
 - **Mises à jour automatiques** — bouton dédié en bas du panneau.
 
-### Transcodage (automatique, sans réglage)
+### Transcodage
+
+Avec **Transcodage forcé** coché (réglage par défaut) : **tout est ré-encodé en
+H.265**, sans exception.
+
+Pourquoi : le décodeur H.264 long-GOP de Premiere se plante par intermittence sur
+certains flux YouTube — des blocs « datamoshés » apparaissent dans l'image, et
+décaler le rush d'une seule image les fait disparaître. Le fichier n'est pas en
+cause, c'est l'interprétation du codec par Premiere. Un fichier ré-encodé
+proprement par ffmpeg n'a pas ce problème. Contrepartie : chaque téléchargement
+passe par un encodage (rapide en GPU) au lieu d'un simple remux.
+
+Case décochée → transcodage « seulement si nécessaire », comme avant :
 
 | Source | Condition | Résultat |
 |---|---|---|
@@ -131,9 +144,10 @@ Compatibilité : Premiere Pro 2020 (14.0) et versions ultérieures.
 
 1. Ouvre ton projet Premiere (peu importe où est rangé le `.prproj`).
 2. Colle l'**URL** de la vidéo dans le panneau Robloader.
-3. *(Optionnel)* choisis la **qualité**, coche **Audio seul**, ou indique un
-   **début/fin** pour un extrait.
-4. Clique sur **Télécharger** — le fichier est téléchargé, préparé, et importé dans
+3. *(Optionnel)* choisis la **qualité**, indique un **début/fin** pour un extrait,
+   ou décoche **Transcodage forcé**.
+4. Clique sur **Télécharger** (ou **Télécharger audio** pour la bande-son seule) —
+   le fichier est téléchargé, préparé, et importé dans
    le chutier `ELEMENTS/Robloader`. 🎬
 
 ---
