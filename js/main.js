@@ -1,7 +1,8 @@
 /*
  * Robloader — côté panneau CEP (Node.js)
  * Télécharge une vidéo (YouTube, TikTok, Instagram, X, Weibo) avec yt-dlp,
- * la prépare pour Premiere (transcodage H.265 seulement si nécessaire) et
+ * la prépare pour Premiere (transcodage H.265 forcé par défaut, cf. la case
+ * « Transcodage forcé » et decideTranscode) et
  * l'importe dans le chutier miroir ELEMENTS/Robloader du projet ouvert.
  *
  * Différences avec l'app desktop Robloader :
@@ -134,10 +135,11 @@ var ui = {
   target: document.getElementById("target"),
   url: document.getElementById("url"),
   quality: document.getElementById("quality"),
-  audio: document.getElementById("audio"),
+  forceTranscode: document.getElementById("force-transcode"),
   start: document.getElementById("start"),
   end: document.getElementById("end"),
   download: document.getElementById("download"),
+  downloadAudio: document.getElementById("download-audio"),
   clear: document.getElementById("clear"),
   queue: document.getElementById("queue"),
   log: document.getElementById("log"),
@@ -350,7 +352,14 @@ function uniqueOutPath(dest, base, ext) {
 // ---------- Décision de transcodage ----------
 // YouTube ≤1080p compatible → natif (remux mp4) ; YouTube ≥1440p → H.265 ;
 // autres sites → natif si codec compatible, sinon H.265.
-function decideTranscode(site, codec, height) {
+//
+// `forced` (case « Transcodage forcé », cochée par défaut) court-circuite tout :
+// on ré-encode même un H.264 1080p. Raison : le décodeur H.264 long-GOP de
+// Premiere se plante par intermittence sur certains flux YouTube — des blocs
+// « datamoshés » apparaissent, et décaler le rush d'une image les fait
+// disparaître. Un flux ré-encodé proprement par ffmpeg n'a pas ce problème.
+function decideTranscode(site, codec, height, forced) {
+  if (forced) { return true; }
   var compatible = PREMIERE_READY_CODECS.indexOf(codec) !== -1;
   if (!compatible) { return true; }
   if (site === "youtube" && height >= 1440) { return true; }
@@ -784,7 +793,7 @@ function downloadOne(task) {
 
           // ----- Vidéo : décision de transcodage après sonde codec/hauteur -----
           return ffprobeVideo(temp).then(function (v) {
-            var needs = decideTranscode(site, v.codec, v.height);
+            var needs = decideTranscode(site, v.codec, v.height, task.opts.forceTranscode);
             // Nom final : « titre - chaîne - résolution.mp4 » (+ « (n) » si doublon
             // de même résolution déjà présent — voir uniqueOutPath).
             var resLabel = resolutionLabel(v.width, v.height);
@@ -1047,7 +1056,18 @@ function onUpdateClick() {
 // Timecode accepté : secondes (« 90 »), mm:ss ou hh:mm:ss.
 var TC_RE = /^\d+(:\d{1,2}){0,2}$/;
 
-function onDownloadClick() {
+// Case « Transcodage forcé » : cochée par défaut, choix mémorisé entre les
+// sessions (on ne stocke que le refus explicite — pas de clé = coché).
+var FORCE_KEY = "robloader.forceTranscode";
+try {
+  if (window.localStorage.getItem(FORCE_KEY) === "0") { ui.forceTranscode.checked = false; }
+} catch (e) { /* ok */ }
+ui.forceTranscode.addEventListener("change", function () {
+  try { window.localStorage.setItem(FORCE_KEY, ui.forceTranscode.checked ? "1" : "0"); }
+  catch (e) { /* ok */ }
+});
+
+function onDownloadClick(audioOnly) {
   var url = ui.url.value.trim();
   if (!url) { setStatus("Colle une URL", "err"); return; }
   var start = ui.start.value.trim();
@@ -1064,16 +1084,19 @@ function onDownloadClick() {
   }
   enqueue(url, {
     quality: ui.quality.value,
-    audio: ui.audio.checked,
+    audio: !!audioOnly,
+    forceTranscode: ui.forceTranscode.checked,
     start: start,
     end: end
   });
   ui.url.value = "";
-  setStatus("En file", "ok");
+  setStatus(audioOnly ? "En file (audio)" : "En file", "ok");
 }
 
-ui.download.addEventListener("click", onDownloadClick);
-ui.url.addEventListener("keydown", function (e) { if (e.key === "Enter") { onDownloadClick(); } });
+ui.download.addEventListener("click", function () { onDownloadClick(false); });
+ui.downloadAudio.addEventListener("click", function () { onDownloadClick(true); });
+// Entrée = téléchargement vidéo (le bouton principal).
+ui.url.addEventListener("keydown", function (e) { if (e.key === "Enter") { onDownloadClick(false); } });
 ui.clear.addEventListener("click", function () {
   // Retire les tâches terminées/annulées de la liste.
   Array.prototype.slice.call(ui.queue.children).forEach(function (el) {

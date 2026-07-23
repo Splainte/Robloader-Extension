@@ -1,5 +1,22 @@
 * { box-sizing: border-box; }
 
+/* Scrollbars façon Premiere : pas de flèches, piste sombre, pouce gris arrondi
+   détaché des bords (bordure transparente + background-clip). Le moteur CEP est
+   du Chromium, les pseudo-éléments ::-webkit-scrollbar y sont donc supportés. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner { background: #1a1a1a; }
+::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+  min-height: 24px;
+}
+::-webkit-scrollbar-thumb:hover   { background: #5e5e5e; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:active  { background: #6e6e6e; background-clip: padding-box; }
+
 body {
   margin: 0;
   padding: 10px;
@@ -12,32 +29,29 @@ body {
   height: 100vh;
 }
 
-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-h1 { font-size: 14px; margin: 0; }
-
 .status {
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 11px;
+  flex: none;
+  align-self: flex-start;
 }
 .status.ok     { background: #1d4620; color: #8fdc92; }
 .status.paused { background: #46411d; color: #dcd48f; }
 .status.err    { background: #461d1d; color: #dc8f8f; }
 
+/* Le titre du panneau est déjà l'onglet Premiere : la 1re ligne porte donc la
+   destination, avec la pastille d'état poussée à droite (elle serait seule sur
+   sa propre ligne). */
 .target-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin-bottom: 8px;
-  word-break: break-all;
   color: #9a9a9a;
 }
+.target-row .dest { flex: 1; min-width: 0; word-break: break-all; }
 .target-row .label { color: #d6d6d6; }
-
-.field { margin-bottom: 8px; }
 
 input[type="text"], select {
   background: #1a1a1a;
@@ -47,7 +61,44 @@ input[type="text"], select {
   padding: 5px 8px;
   font-size: 12px;
 }
-#url { width: 100%; }
+input[type="text"]:hover, select:hover { border-color: #6e6e6e; }
+/* Focus façon Premiere : liseré bleu Adobe (pas le halo blanc de Chromium).
+   Un panneau CEP est du Chromium pur — aucun champ « natif » Premiere n'est
+   exposé au HTML, le look se reproduit donc en CSS. Le box-shadow épaissit le
+   liseré à 2 px sans décaler la mise en page (contrairement à une bordure). */
+input[type="text"]:focus, select:focus {
+  outline: none;
+  border-color: #1473e6;
+  box-shadow: 0 0 0 1px #1473e6;
+}
+input[type="text"]::-webkit-input-placeholder { color: #6e6e6e; }
+button:focus { outline: none; box-shadow: 0 0 0 1px #1473e6; }
+/* Case à cocher façon Premiere : carré sombre bordé de gris, puis pastille
+   claire avec coche foncée une fois cochée (la coche est un SVG en fond, les
+   pseudo-éléments n'étant pas fiables sur un <input>). */
+input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  border: 1px solid #7a7a7a;
+  border-radius: 2px;
+  background: #1a1a1a;
+  cursor: pointer;
+}
+input[type="checkbox"]:hover { border-color: #a6a6a6; }
+input[type="checkbox"]:checked {
+  border-color: #c8c8c8;
+  background: #c8c8c8 url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.3 4.7 9 10 3.2' fill='none' stroke='%231d1d1d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 11px 11px no-repeat;
+}
+input[type="checkbox"]:checked:hover { background-color: #dcdcdc; border-color: #dcdcdc; }
+input[type="checkbox"]:focus { outline: none; box-shadow: 0 0 0 1px #1473e6; }
+/* Ligne URL : le champ prend toute la place restante, la qualité juste après. */
+.url-row { flex-wrap: nowrap; }
+#url { flex: 1; min-width: 0; }
+#quality { flex: none; padding: 5px 4px; font-size: 11px; }
 .tc { width: 64px; text-align: center; }
 
 .row {
@@ -60,11 +111,13 @@ input[type="text"], select {
 .row .label { color: #d6d6d6; }
 .dash { color: #9a9a9a; }
 .chk { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+/* Colle l'élément au bord droit de sa ligne (Nettoyer, Transcodage forcé). */
+.push-right { margin-left: auto; }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
@@ -86,6 +139,10 @@ button.update-available {
   font-weight: 600;
 }
 button.update-available:hover { background: #5a5326; }
+
+/* Les trois boutons de la barre d'action ont la même hauteur (padding commun) :
+   Télécharger / Télécharger audio à gauche, Nettoyer collé à droite. */
+#download, #download-audio, #clear { padding: 5px 12px; white-space: nowrap; }
 
 #download {
   background: #005cc8;

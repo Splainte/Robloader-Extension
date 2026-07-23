@@ -6,29 +6,20 @@
   <link rel="stylesheet" href="css/style.css"/>
 </head>
 <body>
-  <header>
-    <h1>⚙️ Robloader</h1>
-    <div id="status" class="status paused">Démarrage…</div>
-  </header>
-
   <div class="target-row">
-    <span class="label">Destination :</span>
-    <span id="target">—</span>
+    <span class="dest"><span class="label">Destination :</span> <span id="target">—</span></span>
+    <div id="status" class="status paused">Démarrage…</div>
   </div>
 
-  <div class="field">
+  <div class="row url-row">
     <input id="url" type="text" placeholder="Colle l'URL (YouTube, TikTok, Instagram, X, Weibo)…"/>
-  </div>
-
-  <div class="row">
     <select id="quality" title="Qualité (YouTube)">
-      <option value="">Qualité max (jusqu'à 4K)</option>
-      <option value="1440">1440p (2K)</option>
-      <option value="1080">1080p (Full HD)</option>
-      <option value="720">720p (HD)</option>
+      <option value="">Max</option>
+      <option value="1440">1440p</option>
+      <option value="1080">1080p</option>
+      <option value="720">720p</option>
       <option value="480">480p</option>
     </select>
-    <label class="chk"><input id="audio" type="checkbox"/> Audio seul (WAV)</label>
   </div>
 
   <div class="row">
@@ -39,9 +30,16 @@
     <span class="muted small">(vide = tout)</span>
   </div>
 
+  <div class="row">
+    <label class="chk" title="Ré-encode toutes les vidéos, même en 1080p et moins. Évite les artefacts de décodage (« datamoshing ») de Premiere sur certains flux YouTube.">
+      <input id="force-transcode" type="checkbox" checked/> Transcodage forcé
+    </label>
+  </div>
+
   <div class="controls">
     <button id="download">Télécharger</button>
-    <button id="clear" class="small">Nettoyer</button>
+    <button id="download-audio" title="Télécharge la piste audio seule en WAV">Télécharger audio</button>
+    <button id="clear" class="push-right">Nettoyer</button>
   </div>
 
   <div id="queue"></div>
