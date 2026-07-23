@@ -29,29 +29,28 @@ body {
   height: 100vh;
 }
 
-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-h1 { font-size: 14px; margin: 0; }
-
 .status {
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 11px;
+  flex: none;
+  align-self: flex-start;
 }
 .status.ok     { background: #1d4620; color: #8fdc92; }
 .status.paused { background: #46411d; color: #dcd48f; }
 .status.err    { background: #461d1d; color: #dc8f8f; }
 
+/* Le titre du panneau est déjà l'onglet Premiere : la 1re ligne porte donc la
+   destination, avec la pastille d'état poussée à droite (elle serait seule sur
+   sa propre ligne). */
 .target-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin-bottom: 8px;
-  word-break: break-all;
   color: #9a9a9a;
 }
+.target-row .dest { flex: 1; min-width: 0; word-break: break-all; }
 .target-row .label { color: #d6d6d6; }
 
 input[type="text"], select {
@@ -62,6 +61,20 @@ input[type="text"], select {
   padding: 5px 8px;
   font-size: 12px;
 }
+input[type="text"]:hover, select:hover { border-color: #6e6e6e; }
+/* Focus façon Premiere : liseré bleu Adobe (pas le halo blanc de Chromium).
+   Un panneau CEP est du Chromium pur — aucun champ « natif » Premiere n'est
+   exposé au HTML, le look se reproduit donc en CSS. Le box-shadow épaissit le
+   liseré à 2 px sans décaler la mise en page (contrairement à une bordure). */
+input[type="text"]:focus, select:focus {
+  outline: none;
+  border-color: #1473e6;
+  box-shadow: 0 0 0 1px #1473e6;
+}
+input[type="text"]::-webkit-input-placeholder { color: #6e6e6e; }
+button:focus { outline: none; box-shadow: 0 0 0 1px #1473e6; }
+/* Case à cocher aux couleurs de Premiere plutôt qu'au bleu système. */
+input[type="checkbox"] { accent-color: #1473e6; }
 /* Ligne URL : le champ prend toute la place restante, la qualité juste après. */
 .url-row { flex-wrap: nowrap; }
 #url { flex: 1; min-width: 0; }
