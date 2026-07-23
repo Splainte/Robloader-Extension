@@ -73,8 +73,28 @@ input[type="text"]:focus, select:focus {
 }
 input[type="text"]::-webkit-input-placeholder { color: #6e6e6e; }
 button:focus { outline: none; box-shadow: 0 0 0 1px #1473e6; }
-/* Case à cocher aux couleurs de Premiere plutôt qu'au bleu système. */
-input[type="checkbox"] { accent-color: #1473e6; }
+/* Case à cocher façon Premiere : carré sombre bordé de gris, puis pastille
+   claire avec coche foncée une fois cochée (la coche est un SVG en fond, les
+   pseudo-éléments n'étant pas fiables sur un <input>). */
+input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  border: 1px solid #7a7a7a;
+  border-radius: 2px;
+  background: #1a1a1a;
+  cursor: pointer;
+}
+input[type="checkbox"]:hover { border-color: #a6a6a6; }
+input[type="checkbox"]:checked {
+  border-color: #c8c8c8;
+  background: #c8c8c8 url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.3 4.7 9 10 3.2' fill='none' stroke='%231d1d1d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 11px 11px no-repeat;
+}
+input[type="checkbox"]:checked:hover { background-color: #dcdcdc; border-color: #dcdcdc; }
+input[type="checkbox"]:focus { outline: none; box-shadow: 0 0 0 1px #1473e6; }
 /* Ligne URL : le champ prend toute la place restante, la qualité juste après. */
 .url-row { flex-wrap: nowrap; }
 #url { flex: 1; min-width: 0; }
