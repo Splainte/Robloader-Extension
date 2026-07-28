@@ -1089,7 +1089,11 @@ function onDownloadClick(audioOnly) {
     start: start,
     end: end
   });
+  // On vide l'URL ET l'extrait : un timecode oublié s'appliquerait sinon au
+  // téléchargement suivant (autre vidéo), donnant un extrait inattendu.
   ui.url.value = "";
+  ui.start.value = "";
+  ui.end.value = "";
   setStatus(audioOnly ? "En file (audio)" : "En file", "ok");
 }
 
