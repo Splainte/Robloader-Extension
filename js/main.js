@@ -651,7 +651,10 @@ function downloadOne(task) {
     var targetH = isYoutube ? (parseInt(task.opts.quality, 10) || 0) : 0;
     if (isYoutube && !HAS_JS) { targetH = Math.min(targetH || 1080, 1080); }
 
-    var baseArgs = ["--ffmpeg-location", FFMPEG, "-S", FORMAT_SORT];
+    // --force-ipv4 : sur certains reseaux, la route IPv6 vers les serveurs
+    // video de Google (googlevideo.com) est cassee et cause des « connect
+    // timeout » a repetition. IPv4 evite ce trou de routage.
+    var baseArgs = ["--force-ipv4", "--ffmpeg-location", FFMPEG, "-S", FORMAT_SORT];
     if (isYoutube) {
       baseArgs = baseArgs.concat(["--extractor-args", YT_EXTRACTOR_ARGS]);
       if (HAS_JS) { baseArgs = baseArgs.concat(["--remote-components", "ejs:github"]); }
