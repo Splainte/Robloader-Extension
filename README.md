@@ -23,9 +23,13 @@ pas de choix de dossier, pas de réglages superflus, l'extension fait ce qu'il f
   `ELEMENTS/Robloader` dès qu'il est prêt.
 - **Transcodage forcé** (coché par défaut) — tout est ré-encodé en H.265, quelle
   que soit la résolution : plus d'artefacts de décodage Premiere (voir ci-dessous).
-  Décochable pour retrouver le transcodage « seulement si nécessaire ».
+  Décochable pour retrouver le transcodage « seulement si nécessaire ». Encodage
+  accéléré par le GPU (NVIDIA, Intel, AMD, Apple) avec repli sur le processeur.
 - **Extraction d'un segment** — début/fin optionnels pour ne récupérer qu'un passage.
 - **Choix de la qualité** (YouTube) — Max (jusqu'à 4K), 1440p, 1080p, 720p, 480p.
+  Si la qualité max est bloquée, repli automatique en 1080p.
+- **Nom de fichier clair** — `titre - chaîne - résolution.mp4` (avec « (Extrait
+  début - fin) » pour un passage), sans écraser un fichier existant.
 - **Télécharger audio (WAV)** — bouton dédié pour récupérer juste la bande-son.
 - **Cookies automatiques** — utilise ta session navigateur pour débloquer la 4K, les
   vidéos restreintes ou les contenus privés (Instagram, X).
@@ -38,33 +42,52 @@ pas de choix de dossier, pas de réglages superflus, l'extension fait ce qu'il f
 
 ### Transcodage
 
-Avec **Transcodage forcé** coché (réglage par défaut) : **tout est ré-encodé en
-H.265**, sans exception.
+**Transcodage forcé coché** (réglage par défaut, mémorisé d'une session à
+l'autre) : **toute vidéo est ré-encodée en H.265**, quels que soient le site, la
+résolution et le codec d'origine — extrait compris.
 
 Pourquoi : le décodeur H.264 long-GOP de Premiere se plante par intermittence sur
 certains flux YouTube — des blocs « datamoshés » apparaissent dans l'image, et
 décaler le rush d'une seule image les fait disparaître. Le fichier n'est pas en
 cause, c'est l'interprétation du codec par Premiere. Un fichier ré-encodé
 proprement par ffmpeg n'a pas ce problème. Contrepartie : chaque téléchargement
-passe par un encodage (rapide en GPU) au lieu d'un simple remux.
+passe par un encodage (rapide en GPU) au lieu d'une simple copie.
 
-Case décochée → transcodage « seulement si nécessaire », comme avant :
+**Case décochée** → transcodage « seulement si nécessaire » :
 
-| Source | Condition | Résultat |
-|---|---|---|
-| YouTube | ≤ 1080p, codec compatible Premiere (H.264…) | **aucun transcodage** (remux MP4) |
-| YouTube | ≥ 1440p | **H.265** |
-| Autres sites | codec compatible Premiere | **aucun transcodage** (remux MP4) |
-| Autres sites | codec incompatible | **H.265** |
+| Source | Condition | Vidéo entière | Extrait (début/fin) |
+|---|---|---|---|
+| YouTube | ≤ 1080p, codec compatible (H.264 / H.265) | **aucun ré-encodage** (copie en MP4) | **H.264** (découpe à l'image près) |
+| YouTube | ≥ 1440p | **H.265** | **H.265** |
+| Autres sites | codec compatible (H.264 / H.265) | **aucun ré-encodage** (copie en MP4) | **H.264** (découpe à l'image près) |
+| Autres sites | codec incompatible (VP9, AV1…) | **H.265** | **H.265** |
 
-L'encodage H.265 est **accéléré par le GPU** (NVIDIA / Apple Silicon) quand c'est
-possible, avec repli automatique sur le processeur. Pas d'option ProRes.
+Un extrait n'est jamais une simple copie : couper sans ré-encoder tombe sur
+l'image-clé la plus proche et déborde du passage demandé.
+
+**Encodeur H.265** — l'extension essaie les encodeurs dans cet ordre sur le vrai
+fichier et garde le premier qui marche :
+
+- **Windows** : GPU NVIDIA (NVENC) → GPU Intel (Quick Sync) → GPU AMD (AMF) → processeur (x265) ;
+- **macOS** : GPU Apple (VideoToolbox) → processeur (x265).
+
+L'encodeur GPU qui a fonctionné est **mémorisé** : les téléchargements suivants (même
+après un redémarrage de Premiere) vont directement dessus. Le nom de l'encodeur
+utilisé s'affiche pendant la conversion (« Conversion H.265 (GPU NVIDIA)… »).
+Qualité visée : quasi sans perte visible (CRF/CQ 18), audio AAC 256 kb/s,
+fichier MP4 optimisé pour la lecture (`faststart`).
+
+**Audio seul** (bouton *Télécharger audio*) : toujours converti en **WAV**
+(PCM 16 bits), extrait compris.
+
+Pas d'option ProRes.
 
 ### Différences avec l'app desktop Robloader
 
 - Destination **fixe** (plus de bouton « Destination »).
 - **Import automatique** dans Premiere (nouveau).
-- Transcodage **simplifié et automatique** (plus de cases ni de ProRes).
+- Transcodage **simplifié** : une seule case (« Transcodage forcé », cochée par
+  défaut), plus de ProRes.
 - Un seul thème, **pas** de couleur par source, **pas** d'option sous-titres ni
   miniature.
 
